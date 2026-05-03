@@ -111,6 +111,29 @@ def download_optional_files(app_dir: Path) -> None:
             print(f"          {error}")
 
 
+def get_real_stdin():
+    """
+    Corrige execução via pipe.
+
+    Quando o bootstrap é chamado assim:
+        irm URL | py -
+        curl URL | python
+
+    o stdin normal fica ocupado ou fechado.
+    Esta função tenta reabrir a entrada real do terminal.
+    """
+    if os.name == "nt":
+        try:
+            return open("CONIN$", "r", encoding="utf-8", errors="ignore")
+        except Exception:
+            return None
+
+    try:
+        return open("/dev/tty", "r", encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
 def run_main_script(app_dir: Path) -> int:
     script_path = app_dir / "tirinha_cutter.py"
 
@@ -123,8 +146,14 @@ def run_main_script(app_dir: Path) -> int:
 
     command = [sys.executable, str(script_path)]
 
+    real_stdin = get_real_stdin()
+
     try:
-        process = subprocess.run(command, cwd=str(app_dir))
+        process = subprocess.run(
+            command,
+            cwd=str(app_dir),
+            stdin=real_stdin if real_stdin else None,
+        )
         return process.returncode
 
     except KeyboardInterrupt:
@@ -134,6 +163,10 @@ def run_main_script(app_dir: Path) -> int:
     except Exception as error:
         print(f"\n[ERRO] Falha ao executar o script principal: {error}")
         return 1
+
+    finally:
+        if real_stdin:
+            real_stdin.close()
 
 
 def main() -> int:
