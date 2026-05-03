@@ -21,8 +21,10 @@ import json
 import math
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -74,16 +76,27 @@ def clear_screen() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
-def pause() -> None:
-    input("\nPressione ENTER para continuar...")
-
-
 def get_script_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
 def get_presets_path() -> Path:
     return get_script_dir() / PRESETS_FILE
+
+
+def is_termux() -> bool:
+    """
+    Detecta ambiente Termux de forma simples.
+    """
+    prefix = os.environ.get("PREFIX", "")
+    termux_version = os.environ.get("TERMUX_VERSION", "")
+    home = str(Path.home())
+
+    return (
+        "com.termux" in prefix
+        or bool(termux_version)
+        or "/data/data/com.termux" in home
+    )
 
 
 def load_presets() -> dict:
@@ -186,7 +199,88 @@ def normalize_path(raw_path: str) -> Path:
     return Path(raw_path.strip().strip('"').strip("'")).expanduser()
 
 
-def ask_image_path() -> Path:
+def select_image_with_tkinter() -> Path | None:
+    """
+    Seletor visual de arquivo para Windows/Linux com ambiente gráfico.
+    Usa tkinter, que normalmente já vem com Python no Windows.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        selected = filedialog.askopenfilename(
+            title="Selecione a tirinha",
+            filetypes=[
+                ("Imagens", "*.png *.jpg *.jpeg *.webp"),
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg"),
+                ("WEBP", "*.webp"),
+                ("Todos os arquivos", "*.*"),
+            ],
+        )
+
+        root.destroy()
+
+        if selected:
+            return Path(selected)
+
+        return None
+
+    except Exception as error:
+        print(f"[AVISO] Seletor visual indisponível: {error}")
+        return None
+
+
+def select_image_with_termux_storage_get() -> Path | None:
+    """
+    Seletor de arquivo no Android/Termux usando Termux:API.
+
+    Requisitos no Android:
+        pkg install termux-api
+        instalar o app Termux:API
+        termux-setup-storage
+
+    O comando termux-storage-get abre o seletor do Android e copia
+    o arquivo escolhido para o caminho informado.
+    """
+    command_path = shutil.which("termux-storage-get")
+
+    if not command_path:
+        return None
+
+    temp_dir = Path(tempfile.gettempdir()) / "tirinha-cutter"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    temp_file = temp_dir / "imagem_selecionada"
+
+    print("\nAbrindo seletor de arquivos do Android...")
+    print("Escolha a imagem da tirinha.")
+
+    try:
+        result = subprocess.run(
+            [command_path, str(temp_file)],
+            check=False,
+        )
+
+        if result.returncode != 0:
+            print("[AVISO] Nenhum arquivo foi selecionado ou o seletor falhou.")
+            return None
+
+        if temp_file.exists() and temp_file.is_file():
+            return temp_file
+
+        return None
+
+    except Exception as error:
+        print(f"[AVISO] Falha ao usar termux-storage-get: {error}")
+        return None
+
+
+def ask_image_path_manual() -> Path:
     while True:
         raw_path = input("\nDigite o caminho da imagem: ").strip()
         image_path = normalize_path(raw_path)
@@ -197,6 +291,48 @@ def ask_image_path() -> Path:
         print("[ERRO] Imagem não encontrada. Tente novamente.")
         print("Exemplo Termux:")
         print("  /storage/emulated/0/Download/tirinha.png")
+
+
+def ask_image_path() -> Path:
+    """
+    Fluxo de seleção da imagem:
+    1. Android/Termux: tenta termux-storage-get.
+    2. Windows/Linux GUI: tenta tkinter.
+    3. Fallback: pede caminho manual.
+    """
+    print("\nSeleção da imagem")
+    print("1. Abrir seletor de arquivo")
+    print("2. Digitar caminho manualmente")
+
+    choice = input("Escolha [1]: ").strip()
+
+    if not choice:
+        choice = "1"
+
+    if choice == "1":
+        selected_path = None
+
+        if is_termux():
+            selected_path = select_image_with_termux_storage_get()
+
+            if selected_path is None:
+                print("\n[AVISO] Seletor do Termux indisponível.")
+                print("Para ativar no Android, instale:")
+                print("  pkg install termux-api")
+                print("E também o app Termux:API.")
+                print("Depois rode:")
+                print("  termux-setup-storage")
+
+        if selected_path is None:
+            selected_path = select_image_with_tkinter()
+
+        if selected_path is not None and selected_path.exists():
+            return selected_path
+
+        print("\nNão foi possível usar o seletor visual.")
+        print("Vamos pelo caminho manual.")
+
+    return ask_image_path_manual()
 
 
 def get_image_path_from_args() -> Path | None:
@@ -232,7 +368,13 @@ def is_near_9_16(width: int, height: int) -> bool:
     return abs(current - expected) <= 0.03
 
 
-def show_image_info(image_path: Path, image: Image.Image, cut_x: int, cut_y: int, output_dir: Path) -> None:
+def show_image_info(
+    image_path: Path,
+    image: Image.Image,
+    cut_x: int,
+    cut_y: int,
+    output_dir: Path,
+) -> None:
     width, height = image.size
     file_size_kb = image_path.stat().st_size / 1024
 
@@ -439,7 +581,7 @@ def get_output_files(image_path: Path, output_dir: Path, simple_names: bool) -> 
             output_dir / "4.png",
         ]
 
-    stem = image_path.stem
+    stem = image_path.stem if image_path.stem != "imagem_selecionada" else "tirinha"
 
     return [
         output_dir / f"{stem}_1.png",
