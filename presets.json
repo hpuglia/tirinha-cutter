@@ -1,1 +1,7 @@
-
+{
+  "padrao_2x2": {
+    "vertical_ratio": 0.5,
+    "horizontal_ratio": 0.5,
+    "description": "Corte padrão exatamente no meio da imagem."
+  }
+}
