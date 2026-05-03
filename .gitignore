@@ -1,1 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
 
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE / editors
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local output folders
+saida/
+output/
+exports/
+TirinhaCutter/
+
+# Test images / generated crops
+*_1.png
+*_2.png
+*_3.png
+*_4.png
+1.png
+2.png
+3.png
+4.png
+
+# Logs
+*.log
