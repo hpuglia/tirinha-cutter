@@ -27,7 +27,6 @@ import sys
 import threading
 import time
 import webbrowser
-import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,7 +34,7 @@ from urllib.parse import quote, unquote, urlparse
 
 
 APP_NAME = "Tirinha Cutter"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_FOLDER_NAME = "TirinhaCutter"
@@ -107,12 +106,7 @@ def detect_downloads_folder() -> Path:
     candidates: list[Path] = []
 
     if system == "windows":
-        candidates.extend(
-            [
-                home / "Downloads",
-                home / "downloads",
-            ]
-        )
+        candidates.extend([home / "Downloads", home / "downloads"])
     else:
         candidates.extend(
             [
@@ -228,32 +222,25 @@ def crop_and_save(
 
     base_name = sanitize_filename(original_filename)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_dir = output_dir / f"{base_name}_{timestamp}"
-    session_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     if simple_names:
         filenames = ["1.png", "2.png", "3.png", "4.png"]
     else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filenames = [
-            f"{base_name}_1.png",
-            f"{base_name}_2.png",
-            f"{base_name}_3.png",
-            f"{base_name}_4.png",
+            f"{base_name}_{timestamp}_1.png",
+            f"{base_name}_{timestamp}_2.png",
+            f"{base_name}_{timestamp}_3.png",
+            f"{base_name}_{timestamp}_4.png",
         ]
 
     output_files = []
 
     for crop, filename in zip(crops, filenames):
-        output_file = session_dir / filename
+        output_file = output_dir / filename
         crop.save(output_file, format="PNG")
         output_files.append(output_file)
-
-    zip_path = session_dir / f"{base_name}_recortes.zip"
-
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-        for file in output_files:
-            zip_file.write(file, arcname=file.name)
 
     return {
         "width": width,
@@ -263,11 +250,53 @@ def crop_and_save(
         "cut_x_percent": round(cut_x_ratio * 100, 2),
         "cut_y_percent": round(cut_y_ratio * 100, 2),
         "aspect_ratio": calculate_aspect_ratio(width, height),
-        "output_dir": str(session_dir),
+        "output_dir": str(output_dir),
         "files": [str(file) for file in output_files],
-        "zip": str(zip_path),
-        "zip_url": f"/download?path={quote(str(zip_path))}",
     }
+
+
+def select_output_folder_native() -> dict:
+    """
+    Abre seletor nativo de pasta.
+
+    Funciona bem no Windows com tkinter.
+    Em Android/Termux, não há um seletor universal de pasta equivalente via navegador;
+    nesse caso retorna a pasta padrão detectada.
+    """
+    if is_termux():
+        output = get_default_output_dir()
+        return {
+            "ok": True,
+            "path": str(output),
+            "warning": "No Android/Termux, usando pasta padrão de saída.",
+        }
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        selected = filedialog.askdirectory(
+            title="Escolha a pasta de saída dos recortes"
+        )
+
+        root.destroy()
+
+        if selected:
+            return {"ok": True, "path": selected}
+
+        return {"ok": False, "error": "Nenhuma pasta selecionada."}
+
+    except Exception as error:
+        output = get_default_output_dir()
+        return {
+            "ok": True,
+            "path": str(output),
+            "warning": f"Seletor nativo indisponível. Usando padrão. Detalhe: {error}",
+        }
 
 
 def get_html() -> str:
@@ -289,7 +318,6 @@ def get_html() -> str:
       --muted: #a1a1aa;
       --line: #22c55e;
       --line2: #38bdf8;
-      --danger: #ef4444;
       --accent: #f97316;
       --border: #2f3340;
     }}
@@ -429,6 +457,13 @@ def get_html() -> str:
       gap: 8px;
     }}
 
+    .outputRow {{
+      display: grid;
+      grid-template-columns: 1fr 48px;
+      gap: 8px;
+      align-items: center;
+    }}
+
     button {{
       border: 0;
       background: #2f3340;
@@ -443,19 +478,15 @@ def get_html() -> str:
       filter: brightness(1.12);
     }}
 
-    button.primary {{
-      background: linear-gradient(135deg, var(--accent), #ea580c);
-      color: white;
-    }}
-
     button.success {{
       background: linear-gradient(135deg, #16a34a, #15803d);
       color: white;
     }}
 
-    button.danger {{
-      background: linear-gradient(135deg, #ef4444, #b91c1c);
-      color: white;
+    .folderBtn {{
+      font-size: 20px;
+      padding: 8px;
+      height: 42px;
     }}
 
     .btnGrid {{
@@ -505,15 +536,6 @@ def get_html() -> str:
       color: var(--muted);
     }}
 
-    a {{
-      color: #7dd3fc;
-      text-decoration: none;
-    }}
-
-    a:hover {{
-      text-decoration: underline;
-    }}
-
     @media (max-width: 980px) {{
       main {{
         grid-template-columns: 1fr;
@@ -557,7 +579,10 @@ def get_html() -> str:
       <h2>1. Imagem</h2>
       <label>Selecionar arquivo</label>
       <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp">
-      <p class="small">No celular, este botão abre o seletor de imagens do Android. No Windows, abre o seletor do navegador.</p>
+      <p class="small">
+        Por segurança, o navegador não revela a pasta original da imagem. 
+        A saída fica na pasta abaixo, que pode ser alterada pelo botão 📁.
+      </p>
     </div>
 
     <div class="block">
@@ -602,11 +627,14 @@ def get_html() -> str:
     <div class="block">
       <h2>4. Saída</h2>
 
-      <label>Pasta padrão detectada</label>
-      <input id="outputDir" type="text" value="{output_dir}">
+      <label>Pasta de saída</label>
+      <div class="outputRow">
+        <input id="outputDir" type="text" value="{output_dir}">
+        <button class="folderBtn" onclick="selectOutputFolder()" title="Escolher pasta de saída">📁</button>
+      </div>
 
       <p class="small">
-        O app salva no caminho acima. No Windows e Termux, o padrão é Downloads/TirinhaCutter.
+        No Windows, o botão 📁 abre seletor de pasta. No Android/Termux, usa a pasta padrão detectada.
       </p>
 
       <label class="checkboxLine">
@@ -916,6 +944,28 @@ function updateInfo() {{
   `;
 }}
 
+async function selectOutputFolder() {{
+  result.textContent = "Abrindo seletor de pasta...";
+
+  try {{
+    const response = await fetch("/api/select-output-folder", {{
+      method: "POST"
+    }});
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {{
+      throw new Error(data.error || "Nenhuma pasta selecionada.");
+    }}
+
+    document.getElementById("outputDir").value = data.path;
+    result.textContent = data.warning || "Pasta de saída definida:\\n" + data.path;
+
+  }} catch (error) {{
+    result.textContent = "[ERRO] " + error.message;
+  }}
+}}
+
 async function cropImage() {{
   if (!imageDataUrl) {{
     alert("Selecione uma imagem primeiro.");
@@ -946,12 +996,10 @@ async function cropImage() {{
       throw new Error(data.error || "Erro desconhecido.");
     }}
 
-    result.innerHTML =
+    result.textContent =
       "[OK] Recortes salvos com sucesso\\n\\n" +
       "Pasta:\\n" + data.output_dir + "\\n\\n" +
-      "Arquivos:\\n" + data.files.join("\\n") + "\\n\\n" +
-      "ZIP:\\n" + data.zip + "\\n\\n" +
-      `<a href="${{data.zip_url}}" target="_blank">Baixar ZIP com os 4 recortes</a>`;
+      "Arquivos:\\n" + data.files.join("\\n");
 
   }} catch (error) {{
     result.textContent = "[ERRO] " + error.message;
@@ -1042,6 +1090,11 @@ class TirinhaCutterHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/select-output-folder":
+            result = select_output_folder_native()
+            self.send_json(result, status=200 if result.get("ok") else 400)
+            return
+
         if parsed.path != "/api/crop":
             self.send_json({"ok": False, "error": "Rota inválida."}, status=404)
             return
@@ -1082,16 +1135,6 @@ class TirinhaCutterHandler(BaseHTTPRequestHandler):
 
 
 def open_browser_later(url: str) -> None:
-    """
-    Abre o navegador automaticamente no Windows, Linux e Android/Termux.
-
-    No Android/Termux tenta, em ordem:
-    1. termux-open-url
-    2. am start com intent do Android
-    3. webbrowser.open
-
-    A ideia é executar o comando remoto e já cair direto na interface.
-    """
     time.sleep(1.0)
 
     if is_termux():
