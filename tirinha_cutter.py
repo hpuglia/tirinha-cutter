@@ -30,11 +30,11 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 
 APP_NAME = "Tirinha Cutter"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_FOLDER_NAME = "TirinhaCutter"
@@ -260,7 +260,7 @@ def select_output_folder_native() -> dict:
     Abre seletor nativo de pasta.
 
     Funciona bem no Windows com tkinter.
-    Em Android/Termux, não há um seletor universal de pasta equivalente via navegador;
+    Em Android/Termux, não há seletor universal de pasta equivalente via navegador;
     nesse caso retorna a pasta padrão detectada.
     """
     if is_termux():
@@ -451,12 +451,6 @@ def get_html() -> str:
       width: 100%;
     }}
 
-    .row {{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }}
-
     .outputRow {{
       display: grid;
       grid-template-columns: 1fr 48px;
@@ -580,24 +574,15 @@ def get_html() -> str:
       <label>Selecionar arquivo</label>
       <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp">
       <p class="small">
-        Por segurança, o navegador não revela a pasta original da imagem. 
+        Por segurança, o navegador não revela a pasta original da imagem.
         A saída fica na pasta abaixo, que pode ser alterada pelo botão 📁.
       </p>
     </div>
 
-    <div class="block">
-      <h2>2. Preset</h2>
-      <label>Preset de corte</label>
-      <select id="presetSelect"></select>
-
-      <div class="row" style="margin-top:10px;">
-        <button onclick="applySelectedPreset()">Aplicar</button>
-        <button onclick="savePreset()">Salvar atual</button>
-      </div>
-    </div>
+    <select id="presetSelect" style="display:none;"></select>
 
     <div class="block">
-      <h2>3. Ajuste das linhas</h2>
+      <h2>2. Ajuste das linhas</h2>
 
       <label>Linha vertical: <span id="xLabel">50%</span></label>
       <input id="xRange" type="range" min="1" max="99" step="0.1" value="50">
@@ -625,7 +610,7 @@ def get_html() -> str:
     </div>
 
     <div class="block">
-      <h2>4. Saída</h2>
+      <h2>3. Saída</h2>
 
       <label>Pasta de saída</label>
       <div class="outputRow">
@@ -638,7 +623,7 @@ def get_html() -> str:
       </p>
 
       <label class="checkboxLine">
-        <input id="simpleNames" type="checkbox">
+        <input id="simpleNames" type="checkbox" checked>
         Salvar como 1.png, 2.png, 3.png e 4.png
       </label>
 
@@ -701,47 +686,6 @@ function initPresets() {{
   window.allPresets = merged;
 }}
 
-function applySelectedPreset() {{
-  const name = presetSelect.value;
-  const preset = window.allPresets[name];
-
-  if (!preset) return;
-
-  xPercent = Number(preset.vertical_ratio || 0.5) * 100;
-  yPercent = Number(preset.horizontal_ratio || 0.5) * 100;
-
-  syncControls();
-  draw();
-}}
-
-function savePreset() {{
-  const nameRaw = prompt("Nome do preset:", "meu_preset");
-
-  if (!nameRaw) return;
-
-  const name = nameRaw
-    .trim()
-    .toLowerCase()
-    .replaceAll(" ", "_")
-    .replace(/[^a-z0-9_\\-]/g, "");
-
-  if (!name) return alert("Nome inválido.");
-
-  const local = JSON.parse(localStorage.getItem("tirinhaCutterPresets") || "{{}}");
-
-  local[name] = {{
-    vertical_ratio: xPercent / 100,
-    horizontal_ratio: yPercent / 100,
-    description: "Preset salvo no navegador."
-  }};
-
-  localStorage.setItem("tirinhaCutterPresets", JSON.stringify(local));
-  initPresets();
-  presetSelect.value = name;
-
-  alert("Preset salvo: " + name);
-}}
-
 function resetCuts() {{
   xPercent = 50;
   yPercent = 50;
@@ -797,7 +741,7 @@ fileInput.addEventListener("change", event => {{
       empty.style.display = "none";
       canvasWrap.style.display = "block";
       resetCanvasSize();
-      syncControls();
+      resetCuts();
       draw();
     }};
 
@@ -824,6 +768,7 @@ function draw() {{
   ctx.save();
 
   ctx.lineWidth = Math.max(3, canvas.width * 0.004);
+
   ctx.strokeStyle = "rgba(34, 197, 94, 0.95)";
   ctx.beginPath();
   ctx.moveTo(x, 0);
@@ -1108,7 +1053,7 @@ class TirinhaCutterHandler(BaseHTTPRequestHandler):
             filename = payload.get("filename", "tirinha.png")
             cut_x_ratio = float(payload.get("cut_x_ratio", 0.5))
             cut_y_ratio = float(payload.get("cut_y_ratio", 0.5))
-            simple_names = bool(payload.get("simple_names", False))
+            simple_names = bool(payload.get("simple_names", True))
 
             output_dir_raw = str(payload.get("output_dir") or get_default_output_dir()).strip()
             output_dir = Path(output_dir_raw).expanduser()
