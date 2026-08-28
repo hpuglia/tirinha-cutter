@@ -21,6 +21,7 @@ import mimetypes
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -34,11 +35,12 @@ from urllib.parse import unquote, urlparse
 
 
 APP_NAME = "Tirinha Cutter"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_FOLDER_NAME = "TirinhaCutter"
 PRESETS_FILE = "presets.json"
+SHUTDOWN_TOKEN = secrets.token_urlsafe(32)
 
 
 def ensure_dependencies() -> None:
@@ -343,6 +345,15 @@ def get_html() -> str:
       backdrop-filter: blur(12px);
     }}
 
+    .headerContent {{
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }}
+
     header h1 {{
       margin: 0;
       font-size: 20px;
@@ -477,6 +488,12 @@ def get_html() -> str:
       color: white;
     }}
 
+    button.danger {{
+      background: linear-gradient(135deg, #dc2626, #991b1b);
+      color: white;
+      white-space: nowrap;
+    }}
+
     .folderBtn {{
       font-size: 20px;
       padding: 8px;
@@ -547,13 +564,26 @@ def get_html() -> str:
       canvas {{
         max-height: 68vh;
       }}
+
+      .headerContent {{
+        align-items: flex-start;
+      }}
+
+      button.danger {{
+        white-space: normal;
+      }}
     }}
   </style>
 </head>
 <body>
 <header>
-  <h1>{APP_NAME}</h1>
-  <p>Recorte visual de tirinhas 2x2 — arraste as linhas, ajuste e salve as 4 cenas.</p>
+  <div class="headerContent">
+    <div>
+      <h1>{APP_NAME}</h1>
+      <p>Recorte visual de tirinhas 2x2 — arraste as linhas, ajuste e salve as 4 cenas.</p>
+    </div>
+    <button class="danger" onclick="stopApplication()">Fechar app e servidor</button>
+  </div>
 </header>
 
 <main>
@@ -646,6 +676,7 @@ def get_html() -> str:
 
 <script>
 const SERVER_PRESETS = {presets};
+const SHUTDOWN_TOKEN = {json.dumps(SHUTDOWN_TOKEN)};
 
 let image = new Image();
 let imageDataUrl = null;
@@ -911,6 +942,35 @@ async function selectOutputFolder() {{
   }}
 }}
 
+async function stopApplication() {{
+  if (!confirm("Fechar o Tirinha Cutter e encerrar o servidor local?")) {{
+    return;
+  }}
+
+  try {{
+    const response = await fetch("/api/shutdown", {{
+      method: "POST",
+      headers: {{"X-Tirinha-Shutdown-Token": SHUTDOWN_TOKEN}}
+    }});
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {{
+      throw new Error(data.error || "Não foi possível encerrar o servidor.");
+    }}
+
+    document.body.innerHTML = `
+      <main style="display:block;max-width:680px;padding-top:80px;">
+        <section class="viewer" style="min-height:auto;padding:40px;text-align:center;display:block;">
+          <h1>Tirinha Cutter encerrado</h1>
+          <p style="color:var(--muted);">O servidor local foi finalizado. Você já pode fechar esta aba.</p>
+        </section>
+      </main>`;
+  }} catch (error) {{
+    alert("Erro ao encerrar: " + error.message);
+  }}
+}}
+
 async function cropImage() {{
   if (!imageDataUrl) {{
     alert("Selecione uma imagem primeiro.");
@@ -975,6 +1035,7 @@ class TirinhaCutterHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -983,6 +1044,7 @@ class TirinhaCutterHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -1034,6 +1096,20 @@ class TirinhaCutterHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+
+        if parsed.path == "/api/shutdown":
+            supplied_token = self.headers.get("X-Tirinha-Shutdown-Token", "")
+
+            if not secrets.compare_digest(supplied_token, SHUTDOWN_TOKEN):
+                self.send_json(
+                    {"ok": False, "error": "Solicitação de encerramento inválida."},
+                    status=403,
+                )
+                return
+
+            self.send_json({"ok": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
 
         if parsed.path == "/api/select-output-folder":
             result = select_output_folder_native()
