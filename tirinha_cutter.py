@@ -613,7 +613,7 @@ input[type=range] {{ display: block; width: 100%; accent-color: var(--accent); m
         </div>
       </div>
       <div class="headerTools">
-        <span class="versionPill">v0.2.6</span>
+        <span class="versionPill">v0.2.7</span>
         <button class="ghostButton" id="stopButton" type="button">Encerrar servidor</button>
       </div>
     </div>
