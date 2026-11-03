@@ -36,7 +36,7 @@ from urllib.parse import unquote, urlparse
 
 
 APP_NAME = "Tirinha Cutter"
-APP_VERSION = "0.2.6"
+APP_VERSION = "0.2.7"
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_FOLDER_NAME = "TirinhaCutter"
@@ -904,7 +904,7 @@ function loadFile(file) {{
   }}
 
   const lowerName = (file.name || "").toLowerCase();
-  if (!/\.(png|jpe?g|webp)$/.test(lowerName) &&
+  if (!/[.](png|jpe?g|webp)$/.test(lowerName) &&
       !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {{
     setStatus("error", "Formato não suportado", "Use PNG, JPG ou WebP.");
     return;
@@ -1116,7 +1116,7 @@ async function cropImage() {{
       throw new Error(data.error || "Erro ao gravar os recortes.");
     }}
 
-    result.textContent = "Pasta:\n" + data.output_dir + "\n\nArquivos:\n" + data.files.join("\n");
+    result.textContent = ["Pasta:", data.output_dir, "", "Arquivos:", ...data.files].join(String.fromCharCode(10));
     resultPanel.hidden = false;
     setStatus("success", "Quatro cenas salvas com sucesso", data.output_dir);
   }} catch (error) {{
