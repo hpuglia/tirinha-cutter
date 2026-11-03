@@ -726,67 +726,66 @@ input[type=range] {{ display: block; width: 100%; accent-color: var(--accent); m
   </footer>
 
 <script>
-const SERVER_PRESETS = {presets};
+
+"use strict";
+
 const SHUTDOWN_TOKEN = {json.dumps(SHUTDOWN_TOKEN)};
-
-let image = new Image();
-let imageDataUrl = null;
-let originalFilename = "tirinha.png";
-let originalBytesSize = 0;
-let loadSequence = 0;
-let currentReader = null;
-let isLoadingImage = false;
-
-// Limita somente o canvas da prévia; o recorte final usa o arquivo original.
 const PREVIEW_MAX_SIDE = 2560;
 const PREVIEW_MAX_PIXELS = 4000000;
 
+const byId = id => document.getElementById(id);
+const canvas = byId("canvas");
+const ctx = canvas.getContext ? canvas.getContext("2d") : null;
+const fileInput = byId("fileInput");
+const xRange = byId("xRange");
+const yRange = byId("yRange");
+const xLabel = byId("xLabel");
+const yLabel = byId("yLabel");
+const dropZone = byId("dropZone");
+const stageSurface = byId("stageSurface");
+const canvasWrap = byId("canvasWrap");
+const editorControls = byId("editorControls");
+const outputSettings = byId("outputSettings");
+const resultPanel = byId("resultPanel");
+const result = byId("result");
+const cropButton = byId("cropButton");
+const cropButtonText = byId("cropButtonText");
+
+let image = null;
+let imageDataUrl = null;
+let originalFilename = "tirinha.png";
+let originalBytesSize = 0;
 let xPercent = 50;
 let yPercent = 50;
-
+let loadSequence = 0;
+let currentReader = null;
+let isLoadingImage = false;
+let isSaving = false;
 let dragging = null;
+let activePointerId = null;
 
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const fileInput = document.getElementById("fileInput");
-const xRange = document.getElementById("xRange");
-const yRange = document.getElementById("yRange");
-const xLabel = document.getElementById("xLabel");
-const yLabel = document.getElementById("yLabel");
-const info = document.getElementById("info");
-const result = document.getElementById("result");
-const empty = document.getElementById("empty");
-const canvasWrap = document.getElementById("canvasWrap");
-const presetSelect = document.getElementById("presetSelect");
-
-function initPresets() {{
-  const local = JSON.parse(localStorage.getItem("tirinhaCutterPresets") || "{{}}");
-  const merged = {{...SERVER_PRESETS, ...local}};
-
-  presetSelect.innerHTML = "";
-
-  Object.keys(merged).forEach(name => {{
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    presetSelect.appendChild(opt);
-  }});
-
-  window.allPresets = merged;
+function setStatus(kind, title, description) {{
+  byId("statusDot").dataset.kind = kind;
+  byId("statusTitle").textContent = title;
+  byId("statusDesc").textContent = description;
 }}
 
-function resetCuts() {{
-  xPercent = 50;
-  yPercent = 50;
-  syncControls();
-  draw();
+function hasImage() {{
+  return Boolean(image && image.naturalWidth && imageDataUrl);
 }}
 
-function nudge(dx, dy) {{
-  xPercent = clamp(xPercent + dx * 0.25, 1, 99);
-  yPercent = clamp(yPercent + dy * 0.25, 1, 99);
-  syncControls();
-  draw();
+function refreshControls() {{
+  const ready = hasImage();
+  editorControls.hidden = !ready;
+  outputSettings.hidden = !ready;
+  byId("stageBottom").hidden = !ready;
+  byId("replaceButton").hidden = !ready;
+  canvasWrap.hidden = !ready;
+  dropZone.hidden = ready;
+  cropButton.disabled = !ready || isLoadingImage || isSaving;
+  cropButtonText.innerHTML = isSaving
+    ? "Salvando recortes..."
+    : "Recortar e salvar <small>4 cenas</small>";
 }}
 
 function clamp(v, min, max) {{
@@ -798,119 +797,26 @@ function syncControls() {{
   yRange.value = yPercent;
   xLabel.textContent = xPercent.toFixed(1) + "%";
   yLabel.textContent = yPercent.toFixed(1) + "%";
-  updateInfo();
 }}
 
-xRange.addEventListener("input", () => {{
-  xPercent = Number(xRange.value);
+function resetCuts() {{
+  if (!hasImage()) return;
+  xPercent = 50;
+  yPercent = 50;
   syncControls();
   draw();
-}});
-
-yRange.addEventListener("input", () => {{
-  yPercent = Number(yRange.value);
-  syncControls();
-  draw();
-}});
-
-function imageLoadError(message, sequence) {{
-  if (sequence !== loadSequence) return;
-
-  isLoadingImage = false;
-  currentReader = null;
-  image = new Image();
-  imageDataUrl = null;
-  canvasWrap.style.display = "none";
-  empty.style.display = "block";
-  empty.textContent = "Não foi possível carregar esta imagem.";
-  info.textContent = "Nenhuma imagem carregada.";
-  result.textContent = "[ERRO] " + message;
 }}
 
-fileInput.addEventListener("change", event => {{
-  const file = event.target.files && event.target.files[0];
+function nudge(dx, dy) {{
+  if (!hasImage()) return;
+  xPercent = clamp(xPercent + dx * 0.25, 1, 99);
+  yPercent = clamp(yPercent + dy * 0.25, 1, 99);
+  syncControls();
+  draw();
+}}
 
-  // Liberar o input permite selecionar o mesmo arquivo sem recarregar a página.
-  fileInput.value = "";
-  if (!file) return;
-
-  const sequence = ++loadSequence;
-
-  // Cancela leituras anteriores e ignora conclusões assíncronas atrasadas.
-  if (currentReader && currentReader.readyState === FileReader.LOADING) {{
-    currentReader.abort();
-  }}
-
-  isLoadingImage = true;
-  imageDataUrl = null;
-  image = new Image();
-  originalFilename = file.name;
-  originalBytesSize = file.size;
-
-  canvasWrap.style.display = "none";
-  empty.style.display = "block";
-  empty.textContent = "Carregando imagem...";
-  info.textContent = "Lendo " + file.name + "...";
-  result.textContent = "Preparando a imagem...";
-
-  const reader = new FileReader();
-  currentReader = reader;
-
-  reader.onload = () => {{
-    if (sequence !== loadSequence) return;
-
-    const dataUrl = reader.result;
-    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {{
-      imageLoadError("Arquivo inválido ou formato não reconhecido.", sequence);
-      return;
-    }}
-
-    const candidate = new Image();
-    candidate.onload = () => {{
-      if (sequence !== loadSequence) return;
-
-      if (!candidate.naturalWidth || !candidate.naturalHeight) {{
-        imageLoadError("Imagem sem dimensões válidas.", sequence);
-        return;
-      }}
-
-      try {{
-        image = candidate;
-        imageDataUrl = dataUrl;
-        resetCanvasSize();
-        xPercent = 50;
-        yPercent = 50;
-        isLoadingImage = false;
-        currentReader = null;
-        empty.style.display = "none";
-        canvasWrap.style.display = "block";
-        syncControls();
-        draw();
-        result.textContent = "Imagem carregada. Ajuste as linhas e recorte.";
-      }} catch (error) {{
-        imageLoadError("Falha ao preparar a prévia: " + error.message, sequence);
-      }}
-    }};
-
-    candidate.onerror = () => {{
-      imageLoadError("Não foi possível decodificar esta imagem.", sequence);
-    }};
-
-    candidate.src = dataUrl;
-  }};
-
-  reader.onerror = () => {{
-    imageLoadError("Falha ao ler o arquivo. Tente selecioná-lo novamente.", sequence);
-  }};
-
-  try {{
-    reader.readAsDataURL(file);
-  }} catch (error) {{
-    imageLoadError("Erro ao abrir o arquivo: " + error.message, sequence);
-  }}
-}});
-
-function resetCanvasSize() {{
+function prepareCanvas() {{
+  if (!ctx || !image) return;
   const width = image.naturalWidth;
   const height = image.naturalHeight;
   const scale = Math.min(
@@ -918,215 +824,273 @@ function resetCanvasSize() {{
     PREVIEW_MAX_SIDE / Math.max(width, height),
     Math.sqrt(PREVIEW_MAX_PIXELS / (width * height))
   );
+  const targetWidth = Math.max(1, Math.round(width * scale));
+  const targetHeight = Math.max(1, Math.round(height * scale));
 
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
 }}
 
 function draw() {{
-  if (!image || !image.naturalWidth) return;
+  if (!ctx || !hasImage() || !canvas.width || !canvas.height) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-  const x = canvas.width * (xPercent / 100);
-  const y = canvas.height * (yPercent / 100);
-
+  const x = width * xPercent / 100;
+  const y = height * yPercent / 100;
   ctx.save();
-
-  ctx.lineWidth = Math.max(3, canvas.width * 0.004);
-
-  ctx.strokeStyle = "rgba(34, 197, 94, 0.95)";
+  ctx.lineWidth = Math.max(2, Math.min(7, width * 0.003));
+  ctx.strokeStyle = "#68e8a9";
   ctx.beginPath();
   ctx.moveTo(x, 0);
-  ctx.lineTo(x, canvas.height);
+  ctx.lineTo(x, height);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(56, 189, 248, 0.95)";
+  ctx.strokeStyle = "#78bdff";
   ctx.beginPath();
   ctx.moveTo(0, y);
-  ctx.lineTo(canvas.width, y);
+  ctx.lineTo(width, y);
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(0,0,0,0.58)";
-  ctx.fillRect(10, 10, 158, 74);
+  const fontSize = Math.max(13, Math.min(22, width * .015));
+  ctx.font = "700 " + fontSize + "px system-ui";
+  const textX = "X " + Math.round(image.naturalWidth * xPercent / 100) + " px";
+  const textY = "Y " + Math.round(image.naturalHeight * yPercent / 100) + " px";
+  const labelWidth = Math.max(ctx.measureText(textX).width, ctx.measureText(textY).width) + 26;
 
-  ctx.fillStyle = "#fff";
-  ctx.font = Math.max(16, canvas.width * 0.018) + "px system-ui";
-  ctx.fillText("X: " + Math.round(image.naturalWidth * xPercent / 100) + " px", 22, 38);
-  ctx.fillText("Y: " + Math.round(image.naturalHeight * yPercent / 100) + " px", 22, 66);
-
+  ctx.fillStyle = "rgba(9, 18, 30, 0.85)";
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(10, 10, labelWidth, fontSize * 3 + 15, 8)
+                : ctx.rect(10, 10, labelWidth, fontSize * 3 + 15);
+  ctx.fill();
+  ctx.fillStyle = "#e7f3fd";
+  ctx.fillText(textX, 23, 17 + fontSize);
+  ctx.fillText(textY, 23, 20 + fontSize * 2.3);
   ctx.restore();
-
-  updateInfo();
 }}
 
-function canvasPoint(event) {{
+function updateFileLabels() {{
+  if (!hasImage()) return;
+  byId("stageTitle").textContent = "Ajuste visual do recorte";
+  byId("filenamePill").textContent = originalFilename.length > 38
+    ? originalFilename.slice(0, 35) + "..." : originalFilename;
+  byId("filenamePill").title = originalFilename;
+  byId("dimensionsPill").textContent =
+    image.naturalWidth + " × " + image.naturalHeight + " px";
+}}
+
+function loadFailed(message, sequence) {{
+  if (sequence !== loadSequence) return;
+  isLoadingImage = false;
+  currentReader = null;
+  refreshControls();
+  setStatus("error", "Falha ao carregar", hasImage()
+    ? message + " A imagem anterior foi mantida."
+    : message + " Escolha outro arquivo ou tente novamente.");
+}}
+
+function loadFile(file) {{
+  if (!file) return;
+  if (isSaving) {{
+    setStatus("busy", "Exportação em andamento", "Conclua a gravação antes de trocar de imagem.");
+    return;
+  }}
+
+  const lowerName = (file.name || "").toLowerCase();
+  if (!/\.(png|jpe?g|webp)$/.test(lowerName) &&
+      !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {{
+    setStatus("error", "Formato não suportado", "Use PNG, JPG ou WebP.");
+    return;
+  }}
+  if (file.size === 0) {{
+    setStatus("error", "Arquivo vazio", "Selecione uma imagem com conteúdo.");
+    return;
+  }}
+
+  const sequence = ++loadSequence;
+  if (currentReader && currentReader.readyState === FileReader.LOADING) {{
+    currentReader.abort();
+  }}
+
+  isLoadingImage = true;
+  refreshControls();
+  setStatus("busy", "Carregando imagem", file.name + " · preparando a visualização");
+
+  const reader = new FileReader();
+  currentReader = reader;
+  reader.onerror = () => loadFailed("O navegador não conseguiu ler o arquivo.", sequence);
+  reader.onload = () => {{
+    if (sequence !== loadSequence) return;
+    const dataUrl = reader.result;
+
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {{
+      loadFailed("O arquivo não contém dados de imagem válidos.", sequence);
+      return;
+    }}
+
+    const candidate = new Image();
+    candidate.onerror = () => loadFailed("O navegador não conseguiu decodificar a imagem.", sequence);
+    candidate.onload = () => {{
+      if (sequence !== loadSequence) return;
+      if (!candidate.naturalWidth || !candidate.naturalHeight) {{
+        loadFailed("Dimensões inválidas.", sequence);
+        return;
+      }}
+
+      // Não perde a imagem anterior se a nova não puder ser desenhada.
+      const previous = {{
+        image, imageDataUrl, originalFilename, originalBytesSize, xPercent, yPercent
+      }};
+
+      image = candidate;
+      imageDataUrl = dataUrl;
+      originalFilename = file.name || "tirinha.png";
+      originalBytesSize = file.size;
+      xPercent = 50;
+      yPercent = 50;
+      try {{
+        prepareCanvas();
+        draw();
+      }} catch (error) {{
+        image = previous.image;
+        imageDataUrl = previous.imageDataUrl;
+        originalFilename = previous.originalFilename;
+        originalBytesSize = previous.originalBytesSize;
+        xPercent = previous.xPercent;
+        yPercent = previous.yPercent;
+        loadFailed("A prévia excedeu os recursos do navegador.", sequence);
+        return;
+      }}
+
+      isLoadingImage = false;
+      currentReader = null;
+      syncControls();
+      updateFileLabels();
+      refreshControls();
+      setStatus("ready", "Imagem pronta para recorte",
+        candidate.naturalWidth + " × " + candidate.naturalHeight + " px · ajuste as linhas e salve");
+      resultPanel.hidden = true;
+    }};
+    candidate.src = dataUrl;
+  }};
+
+  try {{
+    reader.readAsDataURL(file);
+  }} catch (error) {{
+    loadFailed("Falha ao abrir arquivo: " + error.message, sequence);
+  }}
+}}
+
+function pointFromEvent(event) {{
   const rect = canvas.getBoundingClientRect();
   const touch = event.touches ? event.touches[0] : event;
-
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-
+  if (!rect.width || !rect.height) return null;
   return {{
-    x: (touch.clientX - rect.left) * scaleX,
-    y: (touch.clientY - rect.top) * scaleY
+    x: (touch.clientX - rect.left) * canvas.width / rect.width,
+    y: (touch.clientY - rect.top) * canvas.height / rect.height
   }};
 }}
 
 function startDrag(event) {{
-  if (!image || !image.naturalWidth) return;
-
+  if (!hasImage() || isLoadingImage || isSaving || !ctx) return;
+  if (event.button !== undefined && event.button !== 0) return;
+  const p = pointFromEvent(event);
+  if (!p) return;
   event.preventDefault();
-
-  const p = canvasPoint(event);
-  const x = canvas.width * (xPercent / 100);
-  const y = canvas.height * (yPercent / 100);
-
-  const distanceX = Math.abs(p.x - x);
-  const distanceY = Math.abs(p.y - y);
-  const threshold = Math.max(35, canvas.width * 0.025);
-
-  if (distanceX < threshold && distanceY < threshold) {{
-    dragging = "both";
-  }} else if (distanceX < threshold) {{
-    dragging = "x";
-  }} else if (distanceY < threshold) {{
-    dragging = "y";
-  }} else {{
-    const dx = Math.abs(p.x - x);
-    const dy = Math.abs(p.y - y);
-    dragging = dx < dy ? "x" : "y";
+  const x = canvas.width * xPercent / 100;
+  const y = canvas.height * yPercent / 100;
+  const dx = Math.abs(p.x - x);
+  const dy = Math.abs(p.y - y);
+  const threshold = Math.max(20, Math.min(canvas.width, canvas.height) * .025);
+  dragging = (dx < threshold && dy < threshold) ? "both"
+    : dx < threshold ? "x"
+    : dy < threshold ? "y"
+    : dx < dy ? "x" : "y";
+  if (event.pointerId !== undefined && canvas.setPointerCapture) {{
+    activePointerId = event.pointerId;
+    canvas.setPointerCapture(event.pointerId);
   }}
-
   moveDrag(event);
 }}
 
 function moveDrag(event) {{
-  if (!dragging) return;
-
+  if (!dragging || !hasImage()) return;
+  if (activePointerId !== null && event.pointerId !== activePointerId) return;
+  const p = pointFromEvent(event);
+  if (!p) return;
   event.preventDefault();
-
-  const p = canvasPoint(event);
-
   if (dragging === "x" || dragging === "both") {{
-    xPercent = clamp((p.x / canvas.width) * 100, 1, 99);
+    xPercent = clamp(p.x / canvas.width * 100, 1, 99);
   }}
-
   if (dragging === "y" || dragging === "both") {{
-    yPercent = clamp((p.y / canvas.height) * 100, 1, 99);
+    yPercent = clamp(p.y / canvas.height * 100, 1, 99);
   }}
-
   syncControls();
   draw();
 }}
-
-function endDrag() {{
+function endDrag(event) {{
+  if (activePointerId !== null && event && event.pointerId !== undefined &&
+      event.pointerId !== activePointerId) return;
   dragging = null;
+  activePointerId = null;
 }}
 
-canvas.addEventListener("mousedown", startDrag);
-canvas.addEventListener("mousemove", moveDrag);
-window.addEventListener("mouseup", endDrag);
-
-canvas.addEventListener("touchstart", startDrag, {{passive:false}});
-canvas.addEventListener("touchmove", moveDrag, {{passive:false}});
-window.addEventListener("touchend", endDrag);
-
-function updateInfo() {{
-  if (!image || !image.naturalWidth) {{
-    info.innerHTML = "Nenhuma imagem carregada.";
-    return;
-  }}
-
-  const w = image.naturalWidth;
-  const h = image.naturalHeight;
-  const x = Math.round(w * (xPercent / 100));
-  const y = Math.round(h * (yPercent / 100));
-  const ratio = (w / h).toFixed(4);
-  const mb = (originalBytesSize / 1024 / 1024).toFixed(2);
-
-  info.innerHTML = `
-    <b>Arquivo:</b> ${{originalFilename}}<br>
-    <b>Tamanho:</b> ${{w}} x ${{h}} px<br>
-    <b>Aspect ratio:</b> ${{ratio}}<br>
-    <b>Peso:</b> ${{mb}} MB<br>
-    <b>Corte vertical:</b> ${{x}} px (${{xPercent.toFixed(1)}}%)<br>
-    <b>Corte horizontal:</b> ${{y}} px (${{yPercent.toFixed(1)}}%)<br>
-  `;
+if (window.PointerEvent) {{
+  canvas.addEventListener("pointerdown", startDrag);
+  canvas.addEventListener("pointermove", moveDrag);
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("lostpointercapture", endDrag);
+}} else {{
+  canvas.addEventListener("mousedown", startDrag);
+  canvas.addEventListener("mousemove", moveDrag);
+  window.addEventListener("mouseup", endDrag);
+  canvas.addEventListener("touchstart", startDrag, {{passive: false}});
+  canvas.addEventListener("touchmove", moveDrag, {{passive: false}});
+  window.addEventListener("touchend", endDrag);
+  window.addEventListener("touchcancel", endDrag);
 }}
 
 async function selectOutputFolder() {{
-  result.textContent = "Abrindo seletor de pasta...";
-
+  const button = byId("folderButton");
+  button.disabled = true;
+  setStatus("busy", "Abrindo seletor", "Escolha a pasta de saída na janela do sistema.");
   try {{
-    const response = await fetch("/api/select-output-folder", {{
-      method: "POST"
-    }});
-
+    const response = await fetch("/api/select-output-folder", {{method: "POST"}});
     const data = await response.json();
-
     if (!response.ok || !data.ok) {{
       throw new Error(data.error || "Nenhuma pasta selecionada.");
     }}
-
-    document.getElementById("outputDir").value = data.path;
-    result.textContent = data.warning || "Pasta de saída definida:\\n" + data.path;
-
-  }} catch (error) {{
-    result.textContent = "[ERRO] " + error.message;
-  }}
-}}
-
-async function stopApplication() {{
-  if (!confirm("Fechar o Tirinha Cutter e encerrar o servidor local?")) {{
-    return;
-  }}
-
-  try {{
-    const response = await fetch("/api/shutdown", {{
-      method: "POST",
-      headers: {{"X-Tirinha-Shutdown-Token": SHUTDOWN_TOKEN}}
-    }});
-
-    const data = await response.json();
-
-    if (!response.ok || !data.ok) {{
-      throw new Error(data.error || "Não foi possível encerrar o servidor.");
+    byId("outputDir").value = data.path;
+    if (data.warning) {{
+      setStatus("ready", "Pasta padrão selecionada", data.warning);
+    }} else {{
+      setStatus("ready", "Pasta de saída atualizada", data.path);
     }}
-
-    document.body.innerHTML = `
-      <main style="display:block;max-width:680px;padding-top:80px;">
-        <section class="viewer" style="min-height:auto;padding:40px;text-align:center;display:block;">
-          <h1>Tirinha Cutter encerrado</h1>
-          <p style="color:var(--muted);">O servidor local foi finalizado. Você já pode fechar esta aba.</p>
-        </section>
-      </main>`;
   }} catch (error) {{
-    alert("Erro ao encerrar: " + error.message);
+    setStatus("error", "Seletor indisponível",
+      "Digite manualmente o caminho da pasta de saída. " + error.message);
+  }} finally {{
+    button.disabled = false;
   }}
 }}
 
 async function cropImage() {{
-  if (isLoadingImage) {{
-    result.textContent = "Aguarde o carregamento da imagem antes de recortar.";
-    return;
-  }}
+  if (!hasImage() || isLoadingImage || isSaving) return;
 
-  if (!imageDataUrl || !image.naturalWidth) {{
-    alert("Selecione uma imagem primeiro.");
-    return;
-  }}
-
-  result.textContent = "Recortando e salvando...";
+  isSaving = true;
+  refreshControls();
+  setStatus("busy", "Salvando as quatro cenas", "Aguarde enquanto o servidor processa os recortes.");
 
   const payload = {{
     image_data: imageDataUrl,
     filename: originalFilename,
     cut_x_ratio: xPercent / 100,
     cut_y_ratio: yPercent / 100,
-    output_dir: document.getElementById("outputDir").value,
-    simple_names: document.getElementById("simpleNames").checked
+    output_dir: byId("outputDir").value.trim(),
+    simple_names: byId("simpleNames").checked
   }};
 
   try {{
@@ -1135,25 +1099,126 @@ async function cropImage() {{
       headers: {{"Content-Type": "application/json"}},
       body: JSON.stringify(payload)
     }});
-
     const data = await response.json();
-
     if (!response.ok || !data.ok) {{
-      throw new Error(data.error || "Erro desconhecido.");
+      throw new Error(data.error || "Erro ao gravar os recortes.");
     }}
 
-    result.textContent =
-      "[OK] Recortes salvos com sucesso\\n\\n" +
-      "Pasta:\\n" + data.output_dir + "\\n\\n" +
-      "Arquivos:\\n" + data.files.join("\\n");
-
+    result.textContent = "Pasta:\n" + data.output_dir + "\n\nArquivos:\n" + data.files.join("\n");
+    resultPanel.hidden = false;
+    setStatus("success", "Quatro cenas salvas com sucesso", data.output_dir);
   }} catch (error) {{
-    result.textContent = "[ERRO] " + error.message;
+    setStatus("error", "Falha ao salvar", error.message + " · ajuste e tente novamente.");
+  }} finally {{
+    isSaving = false;
+    refreshControls();
   }}
 }}
 
-initPresets();
+async function stopApplication() {{
+  if (!confirm("Fechar o Tirinha Cutter e encerrar o servidor local?")) return;
+  try {{
+    const response = await fetch("/api/shutdown", {{
+      method: "POST",
+      headers: {{"X-Tirinha-Shutdown-Token": SHUTDOWN_TOKEN}}
+    }});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Servidor não encerrou.");
+    document.body.innerHTML = '<main style="max-width:650px;margin:70px auto;padding:22px;color:#e7f2fe;text-align:center"><h1>Tirinha Cutter encerrado</h1><p>O servidor local foi finalizado. Você já pode fechar esta aba.</p></main>';
+  }} catch (error) {{
+    setStatus("error", "Não foi possível encerrar", error.message);
+  }}
+}}
+
+fileInput.addEventListener("change", event => {{
+  const file = event.target.files && event.target.files[0];
+  fileInput.value = "";
+  loadFile(file);
+}});
+dropZone.addEventListener("click", () => fileInput.click());
+dropZone.addEventListener("keydown", event => {{
+  if (event.key === "Enter" || event.key === " ") {{
+    event.preventDefault();
+    fileInput.click();
+  }}
+}});
+byId("replaceButton").addEventListener("click", () => fileInput.click());
+
+["dragenter", "dragover"].forEach(type => {{
+  stageSurface.addEventListener(type, event => {{
+    if (event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files")) {{
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      stageSurface.classList.add("isDragging");
+    }}
+  }});
+}});
+stageSurface.addEventListener("dragleave", event => {{
+  if (!stageSurface.contains(event.relatedTarget)) {{
+    stageSurface.classList.remove("isDragging");
+  }}
+}});
+stageSurface.addEventListener("drop", event => {{
+  event.preventDefault();
+  stageSurface.classList.remove("isDragging");
+  const file = event.dataTransfer && event.dataTransfer.files[0];
+  if (file) loadFile(file);
+}});
+document.addEventListener("paste", event => {{
+  if (event.target && ["INPUT", "TEXTAREA"].includes(event.target.tagName)) return;
+  const items = event.clipboardData && event.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {{
+    if (item.type && item.type.startsWith("image/")) {{
+      const file = item.getAsFile();
+      if (file) {{
+        event.preventDefault();
+        loadFile(file);
+        break;
+      }}
+    }}
+  }}
+}});
+
+xRange.addEventListener("input", () => {{
+  xPercent = Number(xRange.value);
+  syncControls();
+  draw();
+}});
+yRange.addEventListener("input", () => {{
+  yPercent = Number(yRange.value);
+  syncControls();
+  draw();
+}});
+
+document.querySelectorAll("[data-nudge-x]").forEach(button =>
+  button.addEventListener("click", () => nudge(Number(button.dataset.nudgeX), 0)));
+document.querySelectorAll("[data-nudge-y]").forEach(button =>
+  button.addEventListener("click", () => nudge(0, Number(button.dataset.nudgeY))));
+byId("resetButton").addEventListener("click", resetCuts);
+byId("folderButton").addEventListener("click", selectOutputFolder);
+byId("cropButton").addEventListener("click", cropImage);
+byId("stopButton").addEventListener("click", stopApplication);
+
+canvas.addEventListener("keydown", event => {{
+  if (!hasImage()) return;
+  const delta = event.shiftKey ? 4 : 1;
+  if (event.key === "ArrowLeft") {{ nudge(-delta, 0); event.preventDefault(); }}
+  if (event.key === "ArrowRight") {{ nudge(delta, 0); event.preventDefault(); }}
+  if (event.key === "ArrowUp") {{ nudge(0, -delta); event.preventDefault(); }}
+  if (event.key === "ArrowDown") {{ nudge(0, delta); event.preventDefault(); }}
+}});
+document.addEventListener("keydown", event => {{
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && hasImage()) {{
+    event.preventDefault();
+    cropImage();
+  }}
+}});
+
 syncControls();
+refreshControls();
+setStatus("idle", "Aguardando imagem", "Selecione, arraste ou cole uma tirinha para começar.");
+
 </script>
 </body>
 </html>
