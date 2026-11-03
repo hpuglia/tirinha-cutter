@@ -2,7 +2,11 @@
 
 Ferramenta local para separar uma tirinha em grade **2×2** em quatro arquivos PNG. Interface responsiva para Windows, Linux e Android/Termux.
 
-## Interface 0.2.6
+## Interface 0.2.7
+
+A versão **0.2.7** corrige um erro de sintaxe no JavaScript gerado pelo Python que fazia o seletor de imagem abrir sem efetivamente carregar o arquivo. O carregamento e os controles voltam a funcionar.
+
+## Melhorias de interface (0.2.6)
 
 - **Botão de exportação e status sempre visíveis** no rodapé, inclusive em telas pequenas.
 - Controles de corte em **pills compactas**, exibidos somente depois de carregar uma imagem.
