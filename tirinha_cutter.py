@@ -29,13 +29,14 @@ import threading
 import time
 import webbrowser
 from datetime import datetime
+from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 
 APP_NAME = "Tirinha Cutter"
-APP_VERSION = "0.2.5"
+APP_VERSION = "0.2.6"
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_FOLDER_NAME = "TirinhaCutter"
@@ -302,7 +303,7 @@ def select_output_folder_native() -> dict:
 
 
 def get_html() -> str:
-    output_dir = str(get_default_output_dir())
+    output_dir = html_escape(str(get_default_output_dir()), quote=True)
     presets = json.dumps(load_presets(), ensure_ascii=False)
 
     return f"""<!doctype html>
@@ -312,367 +313,417 @@ def get_html() -> str:
   <title>{APP_NAME}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    :root {{
-      --bg: #101114;
-      --panel: #181a20;
-      --panel2: #20232b;
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
-      --line: #22c55e;
-      --line2: #38bdf8;
-      --accent: #f97316;
-      --border: #2f3340;
-    }}
 
-    * {{
-      box-sizing: border-box;
-    }}
+:root {{
+  color-scheme: dark;
+  --bg: #0b1019;
+  --card: #151c29;
+  --card-soft: #1d2636;
+  --text: #f3f6fb;
+  --muted: #9eaabd;
+  --border: #303c4f;
+  --accent: #66e4ad;
+  --accent-deep: #123d31;
+  --blue: #76b7fd;
+  --danger: #ff8f95;
+  --shadow: 0 16px 48px rgba(0, 0, 0, .20);
+}}
+* {{ box-sizing: border-box; }}
+[hidden] {{ display: none !important; }}
+html {{ scroll-behavior: smooth; }}
+body {{
+  min-width: 320px;
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(ellipse 70% 35% at 25% -4%, rgba(54, 115, 112, .2), transparent),
+    linear-gradient(140deg, #0d1521 0%, var(--bg) 60%);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}}
+button, input {{ font: inherit; }}
+button {{ cursor: pointer; }}
+button:disabled {{ cursor: not-allowed; opacity: .52; }}
+button:focus-visible, input:focus-visible, canvas:focus-visible, .dropZone:focus-visible {{
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}}
+header {{
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  border-bottom: 1px solid rgba(117, 144, 168, .14);
+  background: rgba(12, 18, 29, .95);
+  backdrop-filter: blur(14px);
+}}
+.topbar {{
+  max-width: 1512px;
+  min-height: 68px;
+  padding: 12px 24px;
+  margin: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}}
+.brand {{ display: flex; align-items: center; gap: 12px; min-width: 0; }}
+.brandIcon {{
+  flex: none;
+  width: 39px; height: 39px;
+  display: grid; place-items: center;
+  background: linear-gradient(145deg, #184c3c, #1c6b54);
+  color: #a6f5cd;
+  border: 1px solid rgba(102,228,173,.26);
+  border-radius: 12px;
+  font-size: 21px;
+}}
+h1 {{ margin: 0; font-size: 17px; font-weight: 760; letter-spacing: -.4px; }}
+.brandSubtitle {{ margin: 3px 0 0; color: var(--muted); font-size: 11px; }}
+.headerTools {{ display: flex; gap: 8px; align-items: center; }}
+.versionPill, .pill {{
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 26px; padding: 4px 9px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: #202b3b; color: #d2dfef;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}}
+.versionPill {{ color: #92dfb4; border-color: #2a6550; background: #16392e; }}
+.ghostButton, .subtleButton {{
+  border: 1px solid var(--border); border-radius: 10px;
+  background: #202c3d; color: var(--text);
+  padding: 9px 12px; font-size: 12px; font-weight: 700;
+  transition: background .15s, border-color .15s;
+}}
+.ghostButton:hover, .subtleButton:hover {{ background: #293a50; border-color: #51607a; }}
+.workspace {{
+  max-width: 1512px;
+  margin: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 336px);
+  align-items: start;
+  gap: 17px;
+  padding: 20px 22px 136px;
+}}
+.stage, .panel {{
+  border: 1px solid var(--border); background: rgba(21, 28, 41, .96);
+  box-shadow: var(--shadow); border-radius: 17px;
+}}
+.stage {{ min-width: 0; overflow: hidden; }}
+.stageTop {{
+  padding: 17px 19px;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  border-bottom: 1px solid rgba(117,144,168,.14);
+}}
+.eyebrow {{ font-size: 10px; font-weight: 800; letter-spacing: .10em; text-transform: uppercase; color: #8aa0b8; }}
+.stageTop h2 {{ margin: 5px 0 0; font-size: 15px; font-weight: 750; }}
+.stageSurface {{
+  min-height: min(66vh, 660px);
+  display: grid; place-items: center;
+  padding: 25px;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.025) 75%),
+    linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.025) 75%),
+    #101722;
+  background-size: 26px 26px;
+  background-position: 0 0, 13px 13px;
+  position: relative;
+  transition: background .16s;
+}}
+.stageSurface.isDragging {{ background-color: #17372f; }}
+.dropZone {{
+  width: min(100%, 490px);
+  min-height: 300px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px;
+  padding: 28px; text-align: center; cursor: pointer;
+  border: 1.5px dashed #51657f; border-radius: 18px;
+  background: rgba(21,31,46,.92);
+  transition: border-color .15s, background .15s, transform .15s;
+}}
+.dropZone:hover, .stageSurface.isDragging .dropZone {{
+  border-color: var(--accent); background: #1c3031;
+  transform: translateY(-1px);
+}}
+.dropSymbol {{
+  width: 58px; height: 58px; display: grid; place-items: center;
+  border-radius: 16px; background: #263b4d;
+  color: var(--accent); font-size: 27px; font-weight: 300;
+}}
+.dropZone strong {{ font-size: 17px; letter-spacing: -.2px; }}
+.dropZone .supportText {{ color: var(--muted); font-size: 12px; line-height: 1.55; max-width: 320px; }}
+.dropZone .dropAction {{
+  background: var(--accent); color: #0b251d;
+  padding: 10px 16px; border-radius: 10px;
+  font-weight: 800; font-size: 12px;
+}}
+.canvasWrap {{
+  max-width: 100%; display: flex; align-items: center; justify-content: center;
+  border: 1px solid #45526a; background: #090f17;
+  border-radius: 9px; overflow: hidden;
+}}
+canvas {{
+  display: block; max-width: 100%; max-height: min(66vh, 710px);
+  width: auto; height: auto; touch-action: none; cursor: crosshair;
+  user-select: none;
+}}
+.stageBottom {{
+  min-height: 55px; padding: 10px 16px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  border-top: 1px solid rgba(117,144,168,.14);
+}}
+.stageHint {{ margin-left: auto; color: var(--muted); font-size: 11px; }}
+.inspector {{ display: grid; gap: 13px; min-width: 0; }}
+.panel {{ padding: 17px; box-shadow: 0 9px 26px rgba(0,0,0,.1); }}
+.panelHeading {{
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px;
+}}
+.panelHeading h2 {{ margin: 0; font-size: 14px; font-weight: 780; letter-spacing: -.15px; }}
+.panelNumber {{
+  display: grid; place-items: center; width: 22px; height: 22px;
+  flex: none; border-radius: 7px; background: #26364a; color: #9ec8f1;
+  font-size: 11px; font-weight: 850;
+}}
+.panelTitle {{ display: inline-flex; gap: 9px; align-items: center; }}
+.helpText {{ color: var(--muted); line-height: 1.55; margin: 9px 0 0; font-size: 11px; }}
+.fieldLabel {{ display: block; color: #bdcada; font-size: 12px; font-weight: 600; margin: 0 0 8px; }}
+.fileInput {{
+  display: block; width: 100%;
+  padding: 9px; background: #101825; border: 1px solid var(--border);
+  color: #d2dfef; border-radius: 11px; font-size: 11px;
+}}
+.fileInput::file-selector-button {{
+  border: none; background: #2d4053; color: var(--text);
+  font: inherit; font-weight: 750; padding: 7px 9px; border-radius: 7px; margin-right: 9px;
+  cursor: pointer;
+}}
+.axisBlock {{ padding: 11px 11px 9px; border: 1px solid #303e51; border-radius: 13px; background: #192334; margin-bottom: 10px; }}
+.axisTop {{ display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 7px; }}
+.axisTitle {{ font-size: 12px; font-weight: 740; display: flex; gap: 8px; align-items: center; }}
+.axisSwatch {{ width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #65e0a4; }}
+.axisSwatch.y {{ background: #7dbbf7; }}
+.axisValue {{ color: #acf2cc; background: #173c31; border-color: #2f7155; min-width: 55px; }}
+.axisValue.y {{ color: #afd8ff; background: #1b3c5a; border-color: #315b7e; }}
+input[type=range] {{ display: block; width: 100%; accent-color: var(--accent); margin: 11px 0 3px; cursor: pointer; }}
+#yRange {{ accent-color: var(--blue); }}
+.axisCaption {{ display: flex; justify-content: space-between; color: #7e90a7; font-size: 10px; }}
+.toolPills {{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }}
+.toolPills button {{
+  border: 1px solid #38485c; border-radius: 999px;
+  color: #d9e5f3; background: #253349;
+  min-height: 30px; padding: 5px 10px; font-size: 11px; font-weight: 780;
+}}
+.toolPills button:hover {{ background: #324964; border-color: #6688ab; }}
+.toolPills button.resetPill {{ background: var(--accent-deep); color: #a7f6ca; border-color: #356b56; }}
+.toolPills .pillGroupLabel {{ color: #9daec3; font-size: 10px; margin-right: 3px; }}
+.inputRow {{ display: grid; grid-template-columns: minmax(0, 1fr) 39px; gap: 8px; align-items: stretch; }}
+.textField {{
+  width: 100%; min-width: 0; padding: 10px 11px; border-radius: 10px;
+  color: var(--text); background: #0f1723; border: 1px solid var(--border);
+  font-size: 12px; outline-offset: 2px;
+}}
+.iconButton {{
+  display: grid; place-items: center; border: 1px solid var(--border);
+  border-radius: 10px; background: #263448; color: #e2ebf6; font-size: 17px;
+}}
+.iconButton:hover {{ background: #344760; }}
+.checkRow {{ display: flex; gap: 9px; align-items: center; margin-top: 13px; color: #c9d7e7; font-size: 12px; }}
+.checkRow input {{ accent-color: #61d69f; width: 16px; height: 16px; }}
+.resultBox {{
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto;
+  border: 1px solid #2f4255; background: #101b29; color: #bde6cf;
+  border-radius: 10px; font-size: 11px; line-height: 1.55; padding: 11px;
+}}
+.actionDock {{
+  position: fixed; z-index: 20; inset: auto 0 0;
+  background: rgba(13,21,33,.96); border-top: 1px solid #334356;
+  box-shadow: 0 -15px 48px rgba(0,0,0,.35);
+  backdrop-filter: blur(14px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}}
+.dockInner {{
+  max-width: 1512px; margin: auto; padding: 14px 22px;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+}}
+.statusBlock {{ min-width: 0; display: flex; align-items: flex-start; gap: 11px; }}
+.statusDot {{
+  flex: none; margin-top: 6px; width: 9px; height: 9px; border-radius: 50%;
+  background: #75869c; box-shadow: 0 0 0 4px rgba(117,134,156,.12);
+}}
+.statusDot[data-kind=ready] {{ background: #72dfac; box-shadow: 0 0 0 4px rgba(114,223,172,.12); }}
+.statusDot[data-kind=busy] {{ background: #85beff; box-shadow: 0 0 0 4px rgba(133,190,255,.12); animation: glow 1.1s infinite; }}
+.statusDot[data-kind=error] {{ background: #ff9597; box-shadow: 0 0 0 4px rgba(255,149,151,.13); }}
+.statusDot[data-kind=success] {{ background: #72dfac; }}
+@keyframes glow {{ 50% {{ opacity: .35; }} }}
+.statusTitle {{ font-size: 13px; font-weight: 780; overflow-wrap: anywhere; }}
+.statusDesc {{ font-size: 11px; line-height: 1.4; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }}
+.primaryButton {{
+  min-width: 242px; min-height: 52px; display: flex; align-items: center; justify-content: center;
+  gap: 11px; border: none; border-radius: 13px;
+  background: linear-gradient(120deg, #8cf5bf, #57cc9f);
+  color: #10271d; box-shadow: 0 8px 26px rgba(67,204,148,.15);
+  font-size: 14px; font-weight: 850; letter-spacing: -.1px;
+  transition: filter .15s, transform .15s;
+}}
+.primaryButton:enabled:hover {{ filter: brightness(1.05); transform: translateY(-1px); }}
+.primaryButton:disabled {{ background: #344438; color: #a0b3a9; box-shadow: none; opacity: .8; }}
+.primaryButton .actionIcon {{ font-size: 19px; }}
+.primaryButton small {{ font-size: 10px; font-weight: 700; opacity: .7; }}
+@media (max-width: 1020px) {{
+  .workspace {{ grid-template-columns: 1fr; padding: 14px 14px 146px; }}
+  .inspector {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+  #editorControls {{ grid-column: 1 / -1; }}
+  .stageSurface {{ min-height: 45vh; }}
+}}
+@media (max-width: 600px) {{
+  .topbar {{ padding: 10px 13px; min-height: 62px; }}
+  .brandSubtitle, .versionPill {{ display: none; }}
+  .brandIcon {{ width: 34px; height: 34px; }}
+  h1 {{ font-size: 15px; }}
+  .headerTools .ghostButton {{ padding: 8px; font-size: 11px; }}
+  .workspace {{ gap: 11px; padding: 11px 10px 180px; }}
+  .stageTop {{ padding: 13px; }}
+  .stageSurface {{ padding: 12px; min-height: 320px; }}
+  .dropZone {{ min-height: 270px; padding: 21px; }}
+  .inspector {{ grid-template-columns: 1fr; gap: 10px; }}
+  #editorControls {{ grid-column: auto; }}
+  .panel {{ padding: 14px; }}
+  .stageHint {{ width: 100%; margin-left: 0; }}
+  canvas {{ max-height: 54vh; }}
+  .dockInner {{ padding: 10px 12px; align-items: stretch; gap: 11px; flex-direction: column; }}
+  .primaryButton {{ min-width: 0; min-height: 48px; width: 100%; }}
+  .statusBlock {{ align-items: center; }}
+  .statusDot {{ margin-top: 0; }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+  *, *::before, *::after {{ scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }}
+}}
 
-    body {{
-      margin: 0;
-      background: radial-gradient(circle at top, #1f2937 0, var(--bg) 45%);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }}
-
-    header {{
-      padding: 18px 20px;
-      border-bottom: 1px solid var(--border);
-      background: rgba(16, 17, 20, 0.92);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      backdrop-filter: blur(12px);
-    }}
-
-    .headerContent {{
-      max-width: 1400px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }}
-
-    header h1 {{
-      margin: 0;
-      font-size: 20px;
-      letter-spacing: -0.02em;
-    }}
-
-    header p {{
-      margin: 4px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-    }}
-
-    main {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 360px;
-      gap: 18px;
-      padding: 18px;
-      max-width: 1400px;
-      margin: 0 auto;
-    }}
-
-    .viewer, .panel {{
-      background: rgba(24, 26, 32, 0.92);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: 0 18px 60px rgba(0,0,0,.28);
-    }}
-
-    .viewer {{
-      min-height: 78vh;
-      padding: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }}
-
-    .canvasWrap {{
-      position: relative;
-      max-width: 100%;
-      max-height: 78vh;
-      overflow: hidden;
-      border-radius: 14px;
-      background: #0a0a0a;
-      border: 1px solid #2b2f3a;
-    }}
-
-    canvas {{
-      display: block;
-      max-width: 100%;
-      max-height: 78vh;
-      cursor: crosshair;
-      touch-action: none;
-    }}
-
-    .empty {{
-      text-align: center;
-      color: var(--muted);
-      padding: 40px 20px;
-    }}
-
-    .empty strong {{
-      display: block;
-      color: var(--text);
-      font-size: 22px;
-      margin-bottom: 8px;
-    }}
-
-    .panel {{
-      padding: 16px;
-      overflow: auto;
-      max-height: 82vh;
-    }}
-
-    .block {{
-      background: var(--panel2);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-      margin-bottom: 12px;
-    }}
-
-    .block h2 {{
-      margin: 0 0 12px;
-      font-size: 15px;
-    }}
-
-    label {{
-      display: block;
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }}
-
-    input[type="file"],
-    input[type="text"],
-    select {{
-      width: 100%;
-      background: #111318;
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 10px;
-    }}
-
-    input[type="range"] {{
-      width: 100%;
-    }}
-
-    .outputRow {{
-      display: grid;
-      grid-template-columns: 1fr 48px;
-      gap: 8px;
-      align-items: center;
-    }}
-
-    button {{
-      border: 0;
-      background: #2f3340;
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 11px;
-      cursor: pointer;
-      font-weight: 650;
-    }}
-
-    button:hover {{
-      filter: brightness(1.12);
-    }}
-
-    button.success {{
-      background: linear-gradient(135deg, #16a34a, #15803d);
-      color: white;
-    }}
-
-    button.danger {{
-      background: linear-gradient(135deg, #dc2626, #991b1b);
-      color: white;
-      white-space: nowrap;
-    }}
-
-    .folderBtn {{
-      font-size: 20px;
-      padding: 8px;
-      height: 42px;
-    }}
-
-    .btnGrid {{
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      align-items: center;
-    }}
-
-    .btnGrid .blank {{
-      visibility: hidden;
-    }}
-
-    .info {{
-      font-size: 13px;
-      line-height: 1.55;
-      color: var(--muted);
-      word-break: break-word;
-    }}
-
-    .info b {{
-      color: var(--text);
-    }}
-
-    .result {{
-      white-space: pre-wrap;
-      font-size: 13px;
-      line-height: 1.45;
-      color: #d4d4d8;
-      background: #0f1117;
-      border-radius: 10px;
-      padding: 10px;
-      border: 1px solid var(--border);
-    }}
-
-    .small {{
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.4;
-    }}
-
-    .checkboxLine {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: var(--muted);
-    }}
-
-    @media (max-width: 980px) {{
-      main {{
-        grid-template-columns: 1fr;
-        padding: 12px;
-      }}
-
-      .panel {{
-        max-height: none;
-      }}
-
-      .viewer {{
-        min-height: auto;
-      }}
-
-      canvas {{
-        max-height: 68vh;
-      }}
-
-      .headerContent {{
-        align-items: flex-start;
-      }}
-
-      button.danger {{
-        white-space: normal;
-      }}
-    }}
   </style>
 </head>
+
 <body>
-<header>
-  <div class="headerContent">
-    <div>
-      <h1>{APP_NAME}</h1>
-      <p>Recorte visual de tirinhas 2x2 — arraste as linhas, ajuste e salve as 4 cenas.</p>
-    </div>
-    <button class="danger" onclick="stopApplication()">Fechar app e servidor</button>
-  </div>
-</header>
-
-<main>
-  <section class="viewer">
-    <div id="empty" class="empty">
-      <strong>Selecione uma tirinha</strong>
-      A imagem aparecerá aqui com as linhas de corte.
-    </div>
-
-    <div id="canvasWrap" class="canvasWrap" style="display:none;">
-      <canvas id="canvas"></canvas>
-    </div>
-  </section>
-
-  <aside class="panel">
-    <div class="block">
-      <h2>1. Imagem</h2>
-      <label>Selecionar arquivo</label>
-      <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp">
-      <p class="small">
-        Por segurança, o navegador não revela a pasta original da imagem.
-        A saída fica na pasta abaixo, que pode ser alterada pelo botão 📁.
-      </p>
-    </div>
-
-    <select id="presetSelect" style="display:none;"></select>
-
-    <div class="block">
-      <h2>2. Ajuste das linhas</h2>
-
-      <label>Linha vertical: <span id="xLabel">50%</span></label>
-      <input id="xRange" type="range" min="1" max="99" step="0.1" value="50">
-
-      <label style="margin-top:12px;">Linha horizontal: <span id="yLabel">50%</span></label>
-      <input id="yRange" type="range" min="1" max="99" step="0.1" value="50">
-
-      <div style="height:12px;"></div>
-
-      <div class="btnGrid">
-        <span class="blank"></span>
-        <button onclick="nudge(0, -1)">↑</button>
-        <span class="blank"></span>
-
-        <button onclick="nudge(-1, 0)">←</button>
-        <button onclick="resetCuts()">50/50</button>
-        <button onclick="nudge(1, 0)">→</button>
-
-        <span class="blank"></span>
-        <button onclick="nudge(0, 1)">↓</button>
-        <span class="blank"></span>
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <div class="brandIcon" aria-hidden="true">✂</div>
+        <div>
+          <h1>{APP_NAME}</h1>
+          <p class="brandSubtitle">Cortes precisos · 4 cenas · processamento local</p>
+        </div>
       </div>
-
-      <p class="small">Você também pode arrastar as linhas diretamente sobre a imagem.</p>
-    </div>
-
-    <div class="block">
-      <h2>3. Saída</h2>
-
-      <label>Pasta de saída</label>
-      <div class="outputRow">
-        <input id="outputDir" type="text" value="{output_dir}">
-        <button class="folderBtn" onclick="selectOutputFolder()" title="Escolher pasta de saída">📁</button>
+      <div class="headerTools">
+        <span class="versionPill">v0.2.6</span>
+        <button class="ghostButton" id="stopButton" type="button">Encerrar servidor</button>
       </div>
-
-      <p class="small">
-        No Windows, o botão 📁 abre seletor de pasta. No Android/Termux, usa a pasta padrão detectada.
-      </p>
-
-      <label class="checkboxLine">
-        <input id="simpleNames" type="checkbox" checked>
-        Salvar como 1.png, 2.png, 3.png e 4.png
-      </label>
-
-      <div style="height:12px;"></div>
-
-      <button class="success" style="width:100%;" onclick="cropImage()">Recortar e salvar 4 cenas</button>
     </div>
+  </header>
 
-    <div class="block">
-      <h2>Informações</h2>
-      <div id="info" class="info">Nenhuma imagem carregada.</div>
-    </div>
+  <main class="workspace">
+    <section class="stage" aria-label="Área de visualização da tirinha">
+      <div class="stageTop">
+        <div>
+          <div class="eyebrow">Pré-visualização</div>
+          <h2 id="stageTitle">Sua tirinha, quatro cenas</h2>
+        </div>
+        <button class="ghostButton" type="button" id="replaceButton" hidden>Trocar imagem</button>
+      </div>
+      <div class="stageSurface" id="stageSurface">
+        <div id="dropZone" class="dropZone" tabindex="0" role="button" aria-label="Selecionar imagem para recortar">
+          <span class="dropSymbol" aria-hidden="true">＋</span>
+          <strong>Adicione uma imagem</strong>
+          <span class="supportText">Arraste para esta área, cole do clipboard (Ctrl+V) ou escolha um arquivo PNG, JPG ou WebP.</span>
+          <span class="dropAction">Escolher imagem</span>
+        </div>
+        <div id="canvasWrap" class="canvasWrap" hidden>
+          <canvas id="canvas" tabindex="0" aria-label="Imagem com linhas de corte ajustáveis"></canvas>
+        </div>
+      </div>
+      <div class="stageBottom" id="stageBottom" hidden>
+        <span class="pill" id="filenamePill">Imagem</span>
+        <span class="pill" id="dimensionsPill">—</span>
+        <span class="stageHint">Arraste as linhas na imagem ou ajuste no painel.</span>
+      </div>
+    </section>
 
-    <div class="block">
-      <h2>Resultado</h2>
-      <div id="result" class="result">Aguardando recorte.</div>
+    <aside class="inspector" aria-label="Ferramentas de recorte">
+      <section class="panel" id="imagePanel">
+        <div class="panelHeading">
+          <span class="panelTitle"><span class="panelNumber">01</span><h2>Imagem</h2></span>
+        </div>
+        <label class="fieldLabel" for="fileInput">Escolher arquivo</label>
+        <input class="fileInput" id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+        <p class="helpText">A imagem é processada neste computador. A prévia pode ser reduzida, mas o arquivo final mantém sua resolução.</p>
+      </section>
+
+      <section class="panel" id="editorControls" hidden>
+        <div class="panelHeading">
+          <span class="panelTitle"><span class="panelNumber">02</span><h2>Ajustar cortes</h2></span>
+          <span class="pill">4 quadrantes</span>
+        </div>
+        <div class="axisBlock">
+          <div class="axisTop">
+            <label class="axisTitle" for="xRange"><span class="axisSwatch"></span> Linha vertical</label>
+            <output class="pill axisValue" id="xLabel" for="xRange">50.0%</output>
+          </div>
+          <input id="xRange" type="range" min="1" max="99" step="0.1" value="50" aria-label="Posição do corte vertical">
+          <div class="axisCaption"><span>Esquerda</span><span>Direita</span></div>
+        </div>
+        <div class="axisBlock">
+          <div class="axisTop">
+            <label class="axisTitle" for="yRange"><span class="axisSwatch y"></span> Linha horizontal</label>
+            <output class="pill axisValue y" id="yLabel" for="yRange">50.0%</output>
+          </div>
+          <input id="yRange" type="range" min="1" max="99" step="0.1" value="50" aria-label="Posição do corte horizontal">
+          <div class="axisCaption"><span>Topo</span><span>Base</span></div>
+        </div>
+        <div class="toolPills" aria-label="Ajustes rápidos das linhas">
+          <span class="pillGroupLabel">X</span>
+          <button type="button" data-nudge-x="-1" title="Vertical 0,25% à esquerda">−</button>
+          <button type="button" data-nudge-x="1" title="Vertical 0,25% à direita">＋</button>
+          <span class="pillGroupLabel">Y</span>
+          <button type="button" data-nudge-y="-1" title="Horizontal 0,25% para cima">↑</button>
+          <button type="button" data-nudge-y="1" title="Horizontal 0,25% para baixo">↓</button>
+          <button type="button" id="resetButton" class="resetPill" title="Restaurar corte central">50/50</button>
+        </div>
+        <p class="helpText">Setas do teclado nos controles. Use 50/50 para voltar ao centro.</p>
+      </section>
+
+      <section class="panel" id="outputSettings" hidden>
+        <div class="panelHeading">
+          <span class="panelTitle"><span class="panelNumber">03</span><h2>Salvar recortes</h2></span>
+        </div>
+        <label class="fieldLabel" for="outputDir">Pasta de destino</label>
+        <div class="inputRow">
+          <input class="textField" id="outputDir" type="text" value="{output_dir}" spellcheck="false" autocomplete="off">
+          <button class="iconButton" id="folderButton" type="button" title="Escolher pasta de saída" aria-label="Selecionar pasta de saída">▣</button>
+        </div>
+        <label class="checkRow"><input type="checkbox" id="simpleNames" checked>Salvar como 1.png, 2.png, 3.png e 4.png</label>
+        <p class="helpText">Se o seletor de pastas não abrir, digite o caminho acima. No Android/Termux, a saída padrão é usada.</p>
+      </section>
+
+      <section class="panel" id="resultPanel" hidden>
+        <div class="panelHeading"><span class="panelTitle"><span class="panelNumber">✓</span><h2>Última exportação</h2></span></div>
+        <div class="resultBox" id="result" aria-live="polite"></div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="actionDock" aria-label="Status e exportação">
+    <div class="dockInner">
+      <div class="statusBlock" role="status" aria-live="polite" aria-atomic="true">
+        <span class="statusDot" id="statusDot" data-kind="idle" aria-hidden="true"></span>
+        <div>
+          <div class="statusTitle" id="statusTitle">Aguardando imagem</div>
+          <div class="statusDesc" id="statusDesc">Selecione ou arraste uma tirinha para começar.</div>
+        </div>
+      </div>
+      <button class="primaryButton" id="cropButton" type="button" disabled>
+        <span class="actionIcon" aria-hidden="true">✂</span>
+        <span id="cropButtonText">Recortar e salvar <small>4 cenas</small></span>
+      </button>
     </div>
-  </aside>
-</main>
+  </footer>
 
 <script>
 const SERVER_PRESETS = {presets};
