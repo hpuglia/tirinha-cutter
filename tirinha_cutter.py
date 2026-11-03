@@ -35,7 +35,7 @@ from urllib.parse import unquote, urlparse
 
 
 APP_NAME = "Tirinha Cutter"
-APP_VERSION = "0.2.4"
+APP_VERSION = "0.2.5"
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_FOLDER_NAME = "TirinhaCutter"
@@ -682,6 +682,13 @@ let image = new Image();
 let imageDataUrl = null;
 let originalFilename = "tirinha.png";
 let originalBytesSize = 0;
+let loadSequence = 0;
+let currentReader = null;
+let isLoadingImage = false;
+
+// Limita somente o canvas da prévia; o recorte final usa o arquivo original.
+const PREVIEW_MAX_SIDE = 2560;
+const PREVIEW_MAX_PIXELS = 4000000;
 
 let xPercent = 50;
 let yPercent = 50;
@@ -755,43 +762,121 @@ yRange.addEventListener("input", () => {{
   draw();
 }});
 
+function imageLoadError(message, sequence) {{
+  if (sequence !== loadSequence) return;
+
+  isLoadingImage = false;
+  currentReader = null;
+  image = new Image();
+  imageDataUrl = null;
+  canvasWrap.style.display = "none";
+  empty.style.display = "block";
+  empty.textContent = "Não foi possível carregar esta imagem.";
+  info.textContent = "Nenhuma imagem carregada.";
+  result.textContent = "[ERRO] " + message;
+}}
+
 fileInput.addEventListener("change", event => {{
-  const file = event.target.files[0];
+  const file = event.target.files && event.target.files[0];
+
+  // Liberar o input permite selecionar o mesmo arquivo sem recarregar a página.
+  fileInput.value = "";
   if (!file) return;
 
+  const sequence = ++loadSequence;
+
+  // Cancela leituras anteriores e ignora conclusões assíncronas atrasadas.
+  if (currentReader && currentReader.readyState === FileReader.LOADING) {{
+    currentReader.abort();
+  }}
+
+  isLoadingImage = true;
+  imageDataUrl = null;
+  image = new Image();
   originalFilename = file.name;
   originalBytesSize = file.size;
 
+  canvasWrap.style.display = "none";
+  empty.style.display = "block";
+  empty.textContent = "Carregando imagem...";
+  info.textContent = "Lendo " + file.name + "...";
+  result.textContent = "Preparando a imagem...";
+
   const reader = new FileReader();
+  currentReader = reader;
 
-  reader.onload = e => {{
-    imageDataUrl = e.target.result;
-    image = new Image();
+  reader.onload = () => {{
+    if (sequence !== loadSequence) return;
 
-    image.onload = () => {{
-      empty.style.display = "none";
-      canvasWrap.style.display = "block";
-      resetCanvasSize();
-      resetCuts();
-      draw();
+    const dataUrl = reader.result;
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {{
+      imageLoadError("Arquivo inválido ou formato não reconhecido.", sequence);
+      return;
+    }}
+
+    const candidate = new Image();
+    candidate.onload = () => {{
+      if (sequence !== loadSequence) return;
+
+      if (!candidate.naturalWidth || !candidate.naturalHeight) {{
+        imageLoadError("Imagem sem dimensões válidas.", sequence);
+        return;
+      }}
+
+      try {{
+        image = candidate;
+        imageDataUrl = dataUrl;
+        resetCanvasSize();
+        xPercent = 50;
+        yPercent = 50;
+        isLoadingImage = false;
+        currentReader = null;
+        empty.style.display = "none";
+        canvasWrap.style.display = "block";
+        syncControls();
+        draw();
+        result.textContent = "Imagem carregada. Ajuste as linhas e recorte.";
+      }} catch (error) {{
+        imageLoadError("Falha ao preparar a prévia: " + error.message, sequence);
+      }}
     }};
 
-    image.src = imageDataUrl;
+    candidate.onerror = () => {{
+      imageLoadError("Não foi possível decodificar esta imagem.", sequence);
+    }};
+
+    candidate.src = dataUrl;
   }};
 
-  reader.readAsDataURL(file);
+  reader.onerror = () => {{
+    imageLoadError("Falha ao ler o arquivo. Tente selecioná-lo novamente.", sequence);
+  }};
+
+  try {{
+    reader.readAsDataURL(file);
+  }} catch (error) {{
+    imageLoadError("Erro ao abrir o arquivo: " + error.message, sequence);
+  }}
 }});
 
 function resetCanvasSize() {{
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  const scale = Math.min(
+    1,
+    PREVIEW_MAX_SIDE / Math.max(width, height),
+    Math.sqrt(PREVIEW_MAX_PIXELS / (width * height))
+  );
+
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
 }}
 
 function draw() {{
   if (!image || !image.naturalWidth) return;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(image, 0, 0);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
   const x = canvas.width * (xPercent / 100);
   const y = canvas.height * (yPercent / 100);
@@ -817,8 +902,8 @@ function draw() {{
 
   ctx.fillStyle = "#fff";
   ctx.font = Math.max(16, canvas.width * 0.018) + "px system-ui";
-  ctx.fillText("X: " + Math.round(x) + " px", 22, 38);
-  ctx.fillText("Y: " + Math.round(y) + " px", 22, 66);
+  ctx.fillText("X: " + Math.round(image.naturalWidth * xPercent / 100) + " px", 22, 38);
+  ctx.fillText("Y: " + Math.round(image.naturalHeight * yPercent / 100) + " px", 22, 66);
 
   ctx.restore();
 
@@ -972,7 +1057,12 @@ async function stopApplication() {{
 }}
 
 async function cropImage() {{
-  if (!imageDataUrl) {{
+  if (isLoadingImage) {{
+    result.textContent = "Aguarde o carregamento da imagem antes de recortar.";
+    return;
+  }}
+
+  if (!imageDataUrl || !image.naturalWidth) {{
     alert("Selecione uma imagem primeiro.");
     return;
   }}
@@ -1230,8 +1320,6 @@ def main() -> None:
     print("Para encerrar, pressione CTRL + C neste terminal.")
     print("=" * 56)
 
-    threading.Thread(target=open_browser_later, args=(url,), daemon=True).start()
-
     try:
         server = ThreadingHTTPServer((HOST, PORT), TirinhaCutterHandler)
     except OSError as error:
@@ -1240,6 +1328,9 @@ def main() -> None:
         print("\nTalvez a porta 8765 já esteja em uso.")
         print("Feche outra execução do Tirinha Cutter e tente novamente.")
         sys.exit(1)
+
+    # O navegador só abre depois que o servidor conseguir ocupar a porta.
+    threading.Thread(target=open_browser_later, args=(url,), daemon=True).start()
 
     try:
         server.serve_forever()
