@@ -461,7 +461,7 @@ h1 {{ margin: 0; font-size: 17px; font-weight: 760; letter-spacing: -.4px; }}
   border: 1px solid #45526a; background: #090f17;
   border-radius: 9px; overflow: hidden;
 }}
-canvas {{
+canvas, #previewFallback {{
   display: block; max-width: 100%; max-height: min(66vh, 710px);
   width: auto; height: auto; touch-action: none; cursor: crosshair;
   user-select: none;
@@ -637,6 +637,7 @@ input[type=range] {{ display: block; width: 100%; accent-color: var(--accent); m
         </div>
         <div id="canvasWrap" class="canvasWrap" hidden>
           <canvas id="canvas" tabindex="0" aria-label="Imagem com linhas de corte ajustáveis"></canvas>
+          <img id="previewFallback" alt="Prévia da imagem (sem linhas visuais)" hidden>
         </div>
       </div>
       <div class="stageBottom" id="stageBottom" hidden>
@@ -735,7 +736,11 @@ const PREVIEW_MAX_PIXELS = 4000000;
 
 const byId = id => document.getElementById(id);
 const canvas = byId("canvas");
-const ctx = canvas.getContext ? canvas.getContext("2d") : null;
+const ctx = (() => {{
+  try {{ return canvas.getContext ? canvas.getContext("2d") : null; }}
+  catch {{ return null; }}
+}})();
+const previewFallback = byId("previewFallback");
 const fileInput = byId("fileInput");
 const xRange = byId("xRange");
 const yRange = byId("yRange");
@@ -950,18 +955,21 @@ function loadFile(file) {{
       originalBytesSize = file.size;
       xPercent = 50;
       yPercent = 50;
+      let previewWarning = false;
       try {{
+        if (!ctx) throw new Error("Canvas indisponível");
         prepareCanvas();
         draw();
+        canvas.hidden = false;
+        previewFallback.hidden = true;
+        previewFallback.removeAttribute("src");
       }} catch (error) {{
-        image = previous.image;
-        imageDataUrl = previous.imageDataUrl;
-        originalFilename = previous.originalFilename;
-        originalBytesSize = previous.originalBytesSize;
-        xPercent = previous.xPercent;
-        yPercent = previous.yPercent;
-        loadFailed("A prévia excedeu os recursos do navegador.", sequence);
-        return;
+        // Navegadores sem Canvas ou com limite de memória ainda podem recortar:
+        // mostra a imagem sem linhas e disponibiliza os controles por porcentagem.
+        previewWarning = true;
+        canvas.hidden = true;
+        previewFallback.src = dataUrl;
+        previewFallback.hidden = false;
       }}
 
       isLoadingImage = false;
@@ -969,8 +977,12 @@ function loadFile(file) {{
       syncControls();
       updateFileLabels();
       refreshControls();
-      setStatus("ready", "Imagem pronta para recorte",
-        candidate.naturalWidth + " × " + candidate.naturalHeight + " px · ajuste as linhas e salve");
+      setStatus("ready", previewWarning
+        ? "Prévia simplificada disponível"
+        : "Imagem pronta para recorte",
+        previewWarning
+          ? "Ajuste as porcentagens no painel. O recorte original continua disponível."
+          : candidate.naturalWidth + " × " + candidate.naturalHeight + " px · ajuste as linhas e salve");
       resultPanel.hidden = true;
     }};
     candidate.src = dataUrl;
